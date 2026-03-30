@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+node_modules/
+.DS_Store
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Local IDE settings
+.idea/
+.vscode/
