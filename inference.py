@@ -19,6 +19,28 @@ SYSTEM_PROMPT = (
 )
 
 
+def load_local_env(env_path: str = ".env") -> None:
+    # Load variables from a local .env file when present.
+    # Existing environment variables keep precedence.
+    if not os.path.exists(env_path):
+        return
+
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_local_env()
+
+
 def heuristic_policy(email_text: str) -> Dict[str, str]:
     text = email_text.lower()
 
