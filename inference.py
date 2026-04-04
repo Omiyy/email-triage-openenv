@@ -14,7 +14,70 @@ from openai import OpenAI
 
 from src.env import EmailTriageEnv
 from src.models import Action
-from src.visualization import plot_cumulative_rewards, plot_rewards, plot_task_scores, show_plots
+
+
+def _fmt_bool(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def _emit_start(task_id: str, model_name: str, api_enabled: bool, total_steps: int) -> None:
+    print(
+        "[START]"
+        f" task_id={task_id}"
+        f" model_name={model_name}"
+        f" api_enabled={_fmt_bool(api_enabled)}"
+        f" total_steps={total_steps}"
+    )
+
+
+def _emit_step(
+    task_id: str,
+    step: int,
+    email_id: str,
+    reward: float,
+    cumulative_reward: float,
+    category: str,
+    priority: str,
+    action: str,
+    reply_template: str,
+) -> None:
+    print(
+        "[STEP]"
+        f" task_id={task_id}"
+        f" step={step:02d}"
+        f" email_id={email_id}"
+        f" reward={reward:.4f}"
+        f" cumulative_reward={cumulative_reward:.4f}"
+        f" category={category}"
+        f" priority={priority}"
+        f" action={action}"
+        f" reply_template={reply_template}"
+    )
+
+
+def _emit_end(
+    task_id: str,
+    steps: int,
+    final_score: float,
+    cumulative_reward: float,
+    avg_reward: float,
+    category_accuracy: float,
+    priority_accuracy: float,
+    action_accuracy: float,
+    reply_accuracy: float,
+) -> None:
+    print(
+        "[END]"
+        f" task_id={task_id}"
+        f" steps={steps}"
+        f" final_score={final_score:.4f}"
+        f" cumulative_reward={cumulative_reward:.4f}"
+        f" avg_reward={avg_reward:.4f}"
+        f" category_accuracy={category_accuracy:.4f}"
+        f" priority_accuracy={priority_accuracy:.4f}"
+        f" action_accuracy={action_accuracy:.4f}"
+        f" reply_accuracy={reply_accuracy:.4f}"
+    )
 
 
 SYSTEM_PROMPT = (
@@ -248,6 +311,28 @@ def rule_reply_template(category: str, action: str, text: str) -> str:
         return "archive_no_reply"
 
 
+def load_local_env(env_path: str = ".env") -> None:
+    # Load variables from a local .env file when present.
+    # Existing environment variables keep precedence.
+    if not os.path.exists(env_path):
+        return
+
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+load_local_env()
+
+
 def heuristic_policy(email_text: str) -> Dict[str, str]:
     """Optimized heuristic policy using modular rule functions."""
     category = rule_category(email_text)
@@ -379,11 +464,16 @@ def _safe_accuracy(correct: int, total: int) -> float:
 def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, object]:
     env = EmailTriageEnv(task_id=task_id)
     obs = env.reset()
+    _emit_start(
+        task_id=task_id,
+        model_name=model_name,
+        api_enabled=bool(os.getenv("API_BASE_URL", "").strip()),
+        total_steps=len(env.dataset),
+    )
     
     # Create hybrid agent for this task
     agent = HybridEmailAgent(client, model_name)
 
-    print(f"\n=== Running {task_id} ===")
     done = False
     step_count = 0
     step_rewards: list[float] = []
@@ -419,13 +509,16 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
         component_accuracy["reply"]["total"] += 1
         component_accuracy["reply"]["correct"] += int(reply_correct)
 
-        breakdown = info["reward_breakdown"]
-        print(
-            f"Step {step_count:02d} | email={info['email_id']} | reward={reward:+.2f} | "
-            f"cat={breakdown['category_component']:+.2f} pri={breakdown['priority_component']:+.2f} "
-            f"act={breakdown['action_component']:+.2f} rep={breakdown['reply_component']:+.2f} "
-            f"penalties={breakdown['penalties']} | "
-            f"ok(cat={int(category_correct)} pri={int(priority_correct)} act={int(action_correct)} rep={int(reply_correct)})"
+        _emit_step(
+            task_id=task_id,
+            step=step_count,
+            email_id=info["email_id"],
+            reward=reward,
+            cumulative_reward=env.state().cumulative_reward,
+            category=action_payload["category"],
+            priority=action_payload["priority"],
+            action=action_payload["action"],
+            reply_template=action_payload["reply_template"],
         )
 
     for key in ["category", "priority", "action", "reply"]:
@@ -440,10 +533,17 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
     # Get agent stats
     agent_stats = agent.get_stats()
 
-    print(f"Final score ({task_id}): {final_score:.4f}")
-    print(f"Cumulative reward ({task_id}): {cumulative_reward:.4f}")
-    print(f"Average reward ({task_id}): {avg_reward:.4f}")
-    print(f"Agent calls: {agent_stats['rule_calls']}")
+    _emit_end(
+        task_id=task_id,
+        steps=step_count,
+        final_score=final_score,
+        cumulative_reward=cumulative_reward,
+        avg_reward=avg_reward,
+        category_accuracy=float(component_accuracy["category"]["accuracy"]),
+        priority_accuracy=float(component_accuracy["priority"]["accuracy"]),
+        action_accuracy=float(component_accuracy["action"]["accuracy"]),
+        reply_accuracy=float(component_accuracy["reply"]["accuracy"]),
+    )
 
     return {
         "task_id": task_id,
@@ -457,53 +557,14 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
     }
 
 
-def print_summary(task_label: str, metrics: Dict[str, object]) -> None:
-    component_accuracy = metrics["component_accuracy"]
-    print(f"\n{task_label}:")
-    print(f"- Final Score: {float(metrics['final_score']):.4f}")
-    print(f"- Avg Reward: {float(metrics['avg_reward']):.4f}")
-    print(f"- Category Accuracy: {float(component_accuracy['category']['accuracy']) * 100:.2f}%")
-    print(f"- Priority Accuracy: {float(component_accuracy['priority']['accuracy']) * 100:.2f}%")
-    print(f"- Action Accuracy: {float(component_accuracy['action']['accuracy']) * 100:.2f}%")
-    print(f"- Reply Accuracy: {float(component_accuracy['reply']['accuracy']) * 100:.2f}%")
-
-
 def main() -> None:
     model_name = os.getenv("MODEL_NAME", "gpt-4o-mini").strip()
     client = make_client()
 
-    print("Email Triage OpenEnv Inference")
-    print(f"API_BASE_URL set: {bool(os.getenv('API_BASE_URL', '').strip())}")
-    print(f"MODEL_NAME: {model_name}")
-    print(f"HF_TOKEN set: {bool(os.getenv('HF_TOKEN', '').strip())}")
-
     task_ids = ["task_easy", "task_medium", "task_hard"]
-    task_labels = {
-        "task_easy": "Task 1 (Easy)",
-        "task_medium": "Task 2 (Medium)",
-        "task_hard": "Task 3 (Hard)",
-    }
-    all_metrics: dict[str, Dict[str, object]] = {}
 
     for task_id in task_ids:
-        all_metrics[task_id] = run_task(task_id=task_id, client=client, model_name=model_name)
-
-    print("\n=== Final Summary ===")
-
-    print_summary("Task 1 (Easy)", all_metrics["task_easy"])
-    print_summary("Task 2 (Medium)", all_metrics["task_medium"])
-    print_summary("Task 3 (Hard)", all_metrics["task_hard"])
-
-    for task_id in task_ids:
-        label = task_labels[task_id]
-        plot_rewards(all_metrics[task_id]["step_rewards"], title=f"{label}: Reward vs Steps")
-        plot_cumulative_rewards(
-            all_metrics[task_id]["cumulative_rewards"],
-            title=f"{label}: Cumulative Reward vs Steps",
-        )
-
-    plot_task_scores({task_labels[task_id]: float(all_metrics[task_id]["final_score"]) for task_id in task_ids})
-    show_plots()
+        run_task(task_id=task_id, client=client, model_name=model_name)
 
 
 if __name__ == "__main__":
