@@ -131,6 +131,8 @@ def validate_extraction(data: dict) -> ExtractResponse:
     """
     Validate extraction output and ensure all fields exist.
     Missing fields are set to null.
+    Intent is validated against VALID_CATEGORIES.
+    Urgency is validated to be "high", "medium", or "low".
     """
     required_fields = ["customer_name", "order_id", "product", "issue", "intent", "urgency"]
     
@@ -142,6 +144,18 @@ def validate_extraction(data: dict) -> ExtractResponse:
             validated[field] = None
         else:
             validated[field] = str(value).strip()
+    
+    # Validate intent against valid categories
+    if validated.get("intent"):
+        validated["intent"] = validate_category(validated["intent"])
+    
+    # Validate urgency
+    urgency = validated.get("urgency", "").lower()
+    if urgency not in ["high", "medium", "low"]:
+        # Default to "medium" if invalid
+        validated["urgency"] = "medium"
+    else:
+        validated["urgency"] = urgency
     
     return ExtractResponse(**validated)
 
@@ -244,13 +258,13 @@ def extract(payload: ExtractRequest) -> dict:
             messages=[
                 {
                     "role": "system",
-                    "content": """Extract information from the email and return ONLY a JSON object with these exact keys:
+                    "content": f"""Extract information from the email and return ONLY a JSON object with these exact keys:
 - customer_name: Name of the customer (null if not found)
 - order_id: Order ID mentioned (null if not found)
 - product: Product mentioned (null if not found)
 - issue: Brief description of the issue (null if not clear)
-- intent: Customer's intent like "request_refund", "ask_question", "report_issue" (null if unclear)
-- urgency: "high", "medium", "low", or null
+- intent: Must be one of: {', '.join(VALID_CATEGORIES)} (choose the closest match)
+- urgency: "high", "medium", or "low"
 
 Return valid JSON only. No markdown, no explanation. All keys must be present."""
                 },
@@ -432,16 +446,8 @@ def rule_based_extract(email: str) -> dict:
             issue = issue_type
             break
     
-    # Determine intent
-    intent = None
-    if "refund" in text:
-        intent = "request_refund"
-    elif any(word in text for word in ["help", "support", "assist"]):
-        intent = "request_help"
-    elif any(word in text for word in ["question", "ask", "wondering"]):
-        intent = "ask_question"
-    elif any(word in text for word in ["problem", "issue", "broken", "not working"]):
-        intent = "report_issue"
+    # Determine intent (must be one of VALID_CATEGORIES)
+    intent = rule_based_classify(email)
     
     # Determine urgency
     urgency = None
