@@ -74,6 +74,161 @@ class SuggestResponse(BaseModel):
 
 
 # ============================================================================
+# OPENENV MODELS
+# ============================================================================
+class StepRequest(BaseModel):
+    action: str  # "classify_email", "extract_entities", "generate_reply"
+
+
+class StepResponse(BaseModel):
+    state: str
+    reward: float
+    done: bool
+
+
+class StateResponse(BaseModel):
+    step: int
+    done: bool
+
+
+class ResetResponse(BaseModel):
+    state: str
+    step: int
+    done: bool
+
+
+# ============================================================================
+# OPENENV STATE MANAGEMENT
+# ============================================================================
+class OpenEnvState:
+    """Manages the OpenEnv environment state."""
+    
+    def __init__(self):
+        self.step_count = 0
+        self.done = False
+        self.current_email = ""
+        self.category = ""
+        self.extracted_data = {}
+        self.response = ""
+    
+    def reset(self) -> dict:
+        """Reset the environment state."""
+        self.step_count = 0
+        self.done = False
+        self.current_email = self._load_sample_email()
+        self.category = ""
+        self.extracted_data = {}
+        self.response = ""
+        
+        return {
+            "state": "environment reset",
+            "step": self.step_count,
+            "done": self.done
+        }
+    
+    def get_state(self) -> dict:
+        """Get current environment state."""
+        return {
+            "step": self.step_count,
+            "done": self.done
+        }
+    
+    def step(self, action: str) -> dict:
+        """Execute one step in the environment."""
+        if self.done:
+            return {
+                "state": "environment already done",
+                "reward": 0.0,
+                "done": True
+            }
+        
+        if action == "classify_email":
+            return self._classify_email()
+        elif action == "extract_entities":
+            return self._extract_entities()
+        elif action == "generate_reply":
+            return self._generate_reply()
+        else:
+            return {
+                "state": f"invalid action: {action}",
+                "reward": 0.0,
+                "done": self.done
+            }
+    
+    def _classify_email(self) -> dict:
+        """Classify the current email."""
+        from app import classify_email_rule_based
+        
+        self.category = classify_email_rule_based(self.current_email)
+        self.step_count += 1
+        
+        return {
+            "state": f"classified as: {self.category}",
+            "reward": 0.33,
+            "done": False
+        }
+    
+    def _extract_entities(self) -> dict:
+        """Extract entities from the current email."""
+        from app import rule_based_extract
+        
+        self.extracted_data = rule_based_extract(self.current_email)
+        self.step_count += 1
+        
+        return {
+            "state": f"extracted: {json.dumps(self.extracted_data)}",
+            "reward": 0.33,
+            "done": False
+        }
+    
+    def _generate_reply(self) -> dict:
+        """Generate reply for the current email."""
+        from app import template_based_suggest, ExtractResponse
+        
+        if not self.category:
+            self.category = "general_inquiry"
+        
+        if not self.extracted_data:
+            self.extracted_data = {
+                "customer_name": None,
+                "order_id": None,
+                "product": None,
+                "issue": None,
+                "intent": None,
+                "urgency": None
+            }
+        
+        extracted = ExtractResponse(**self.extracted_data)
+        self.response = template_based_suggest(self.current_email, self.category, extracted)
+        self.step_count += 1
+        self.done = True
+        
+        return {
+            "state": f"reply generated: {self.response[:100]}...",
+            "reward": 0.34,
+            "done": True
+        }
+    
+    def _load_sample_email(self) -> str:
+        """Load a sample email for the task."""
+        return """Subject: Request for refund on order #12345
+
+Hi Support Team,
+
+I ordered a laptop last week (Order #12345) but it arrived damaged. 
+The screen is cracked and it won't turn on. I would like a full refund.
+
+Please process this as soon as possible.
+
+Thanks,
+John Smith"""
+
+
+# Global state instance
+env_state = OpenEnvState()
+
+
+# ============================================================================
 # FASTAPI APP
 # ============================================================================
 app = FastAPI(
@@ -208,7 +363,7 @@ def classify(payload: ClassifyRequest) -> dict:
     
     if not client:
         # Fallback: rule-based classification
-        category = rule_based_classify(payload.email)
+        category = classify_email_rule_based(payload.email)
         return {"category": validate_category(category)}
     
     try:
@@ -233,7 +388,7 @@ Respond with ONLY the category name, nothing else."""
     
     except Exception as exc:
         # Fallback on error
-        category = rule_based_classify(payload.email)
+        category = classify_email_rule_based(payload.email)
         return {"category": validate_category(category)}
 
 
@@ -365,9 +520,51 @@ Write a professional response:"""
 
 
 # ============================================================================
+# OPENENV ENDPOINTS
+# ============================================================================
+@app.post("/reset", response_model=ResetResponse)
+def reset() -> dict:
+    """
+    Reset the OpenEnv environment.
+    Initializes step counter to 0, sets done = false, loads sample email.
+    """
+    result = env_state.reset()
+    return result
+
+
+@app.post("/step", response_model=StepResponse)
+def step(payload: StepRequest) -> dict:
+    """
+    Execute one step in the OpenEnv environment.
+    
+    Actions:
+    - classify_email: Classify the current email
+    - extract_entities: Extract entities from the current email
+    - generate_reply: Generate a reply for the current email
+    
+    Rewards:
+    - classify_email: 0.33
+    - extract_entities: 0.33
+    - generate_reply: 0.34
+    """
+    result = env_state.step(payload.action)
+    return result
+
+
+@app.get("/state", response_model=StateResponse)
+def state() -> dict:
+    """
+    Get the current OpenEnv environment state.
+    Returns step count and done status.
+    """
+    result = env_state.get_state()
+    return result
+
+
+# ============================================================================
 # FALLBACK FUNCTIONS
 # ============================================================================
-def rule_based_classify(email: str) -> str:
+def classify_email_rule_based(email: str) -> str:
     """Rule-based classification when LLM unavailable."""
     text = email.lower()
     
