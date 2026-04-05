@@ -43,9 +43,18 @@ _runtime_env: EmailTriageEnv | None = None
 
 
 @app.get("/")
-def root() -> Dict[str, str]:
+def root() -> Dict[str, Any]:
     """Root endpoint - health check."""
-    return {"message": "Email Triage OpenEnv is running"}
+    return {
+        "message": "Email Triage OpenEnv is running",
+        "endpoints": {
+            "health": "/health",
+            "reset_get": "/reset?task_id=task_easy",
+            "reset_post": "POST /reset",
+            "step": "POST /step",
+            "state": "/state"
+        }
+    }
 
 
 @app.get("/health")
