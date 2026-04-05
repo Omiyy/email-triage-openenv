@@ -24,15 +24,14 @@ API_BASE_URL = os.getenv("API_BASE_URL", "")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
-# Determine if we're running locally or on Hugging Face
-if API_BASE_URL:
-    # Running with external API - use the provided base URL
-    BASE_URL = API_BASE_URL.replace("/v1", "").rstrip("/")
-    # If BASE_URL is a model endpoint, extract just the host
-    if "/models/" in BASE_URL:
-        BASE_URL = BASE_URL.split("/models/")[0]
+# For local testing, use localhost
+# For Hugging Face deployment, use the Space URL from environment or default
+import sys
+if len(sys.argv) > 1 and sys.argv[1].startswith("http"):
+    # URL provided as argument
+    BASE_URL = sys.argv[1].rstrip("/")
 else:
-    # Running locally - assume server is on localhost:7860
+    # Default to localhost for local testing
     BASE_URL = "http://localhost:7860"
 
 
