@@ -1,464 +1,105 @@
----
-title: Email Triage OpenEnv
-emoji: 📧
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-app_file: inference.py
-pinned: false
----
+# Email Triage Environment
 
-# Email Triage OpenEnv Environment
+## Problem
 
-A realistic Email Triage OpenEnv environment where an AI agent must manage an inbox by classifying emails, prioritizing urgent emails, taking appropriate actions, and generating professional replies.
+Customer-support inboxes mix routine requests with urgent incidents. A triage system has to do more than classify text; it has to make usable decisions under constraints:
 
-## Overview
+- identify the issue type
+- assess urgency
+- choose an action (reply, escalate, archive)
+- keep behavior consistent across a full queue
 
-This environment simulates a real-world customer support email workflow where an AI agent:
-- **Classifies** incoming emails into categories (billing, technical, sales, account, complaint, shipping, other)
-- **Prioritizes** emails based on urgency (low, medium, high, urgent)
-- **Takes actions** (reply, escalate, archive)
-- **Selects appropriate reply templates** for professional responses
+This project provides a repeatable environment to evaluate that behavior with task-level scoring.
 
-The environment provides step-wise rewards based on:
-- Category classification accuracy (+0.3)
-- Priority handling (+0.2)
-- Action correctness (+0.2)
-- Reply template selection (+0.3)
+## Approach
 
-The agent is evaluated using a deterministic grading system that produces a normalized final score between 0.0 and 1.0.
+The environment is split into three evaluation tasks that increase in difficulty. Each task runs through a full email queue and computes a score from step-level rewards.
 
-## Key Features
+Design principles used here:
 
-- **Typed Pydantic models** for observation, action, state, and reward
-- **Gym-compatible loop**: `reset()`, `step(action)`, `state()`
-- **Deterministic reward function** with partial credit
-- **Normalized grader** with scores in `[0.0, 1.0]`
-- **Three progressively harder tasks** evaluating different agent capabilities
-- **Synthetic dataset** of 30 fully labeled support emails
-- **Hybrid agent architecture** supporting both rule-based and LLM-based approaches
-- **Docker deployment** for reproducible execution
-- **Hugging Face Spaces deployment** ready
+- one shared environment contract for all tasks
+- stricter requirements as difficulty increases
+- deterministic baseline available at all times
+- optional LLM-backed path for harder behavior checks
 
-## Project Structure
-
-```text
-email-triage-env/
-
-├── inference.py          # Main entry point for agent evaluation
-├── openenv.yaml          # OpenEnv specification file
-├── Dockerfile            # Docker container configuration
-├── requirements.txt      # Python dependencies
-├── README.md            # Project documentation
-=======
-├── inference.py
-├── pyproject.toml
-├── uv.lock
-├── openenv.yaml
-├── Dockerfile
-├── README.md
-├── requirements.txt
-├── server/
-│   ├── __init__.py
-│   ├── app.py
-├── src/
-│   ├── env.py           # EmailTriageEnv environment implementation
-│   ├── models.py        # Pydantic models (EmailRecord, Action, Observation, State)
-│   ├── dataset.py       # Synthetic email dataset (30 labeled emails)
-│   ├── tasks.py         # Task configurations (easy, medium, hard)
-│   ├── rewards.py       # Reward computation logic
-│   ├── graders.py       # Deterministic grading system
-│   └── visualization.py # Reward plotting utilities
-```
-
-## Environment Design
-
-### Observation Space
-
-Each step provides an `Observation` with:
-- `email_id`: Unique identifier for the email
-- `email_text`: Raw email body text
-- `task_id`: Active task identifier
-- `valid_categories`: List of valid category values
-- `valid_priorities`: List of valid priority values
-- `valid_actions`: List of valid action values
-
-### Action Space
-
-Agent action (`Action` model):
-- `category`: One of `billing|technical|sales|account|complaint|shipping|other`
-- `priority`: One of `low|medium|high|urgent`
-- `action`: One of `reply|escalate|archive`
-- `reply_template`: Template key string (e.g., `billing_refund`, `tech_troubleshoot`)
-
-### State Space
-
-`state()` returns:
-- `task_id`: Active task identifier
-- `current_index`: Position in email queue
-- `total_emails`: Total emails in dataset
-- `cumulative_reward`: Total reward accumulated
-- `last_reward`: Reward from last step
-- `done`: Episode completion flag
-
-Additionally, the environment tracks enhanced statistics in `info["stats"]`:
-- `emails_processed`: Count of processed emails
-- `emails_remaining`: Emails left to process
-- `replies_sent`: Number of reply actions taken
-- `escalations`: Number of escalate actions
-- `archived`: Number of archive actions
-- `urgent_handled`: Number of urgent priority emails processed
+The result is practical: you can compare stable baseline behavior vs model-assisted behavior without changing the core environment loop.
 
 ## Tasks
 
-| Task | Difficulty | Required Outputs | Description |
-|------|------------|------------------|-------------|
-| `task_easy` | Easy | category | Email category classification only |
-| `task_medium` | Medium | category, priority, action | Category + priority assignment + action selection |
-| `task_hard` | Hard | category, priority, action, reply_template | Full email triage with reply template selection |
+- task_easy: basic triage signal quality (mainly category correctness)
+- task_medium: category plus priority/action quality
+- task_hard: category , priority , action , reply_template
 
-### Task Logic
+## Results (Current Snapshot)
 
-- **task_easy**: Only category matters. Other fields use safe defaults (priority=medium, action=reply).
-- **task_medium**: Category, priority, and action must be correct. Reply template uses a generic value.
-- **task_hard**: All fields must be correct including the exact reply template mapped from category and action.
+Recent runs are typically in this range:
 
-## Reward Function
+- task_easy: about 0.93
+- task_medium: about 0.82 to 0.90
+- task_hard: can vary more when model-assisted paths are active , currently for the dataset giving in range (0.76 - 0.79)
 
-Continuous per-step reward with partial credit:
+Interpretation:
 
-| Component | Correct | Reward |
-|-----------|---------|--------|
-| Category | Yes | +0.3 |
-| Priority | Yes | +0.2 |
-| Action | Yes | +0.2 |
-| Reply Template | Yes | +0.3 |
+- repeated identical scores usually mean deterministic path only
+- variability usually indicates model-assisted path or stochastic fallback behavior
 
-### Penalties
+## Setup
 
-- Wrong classification (category mismatch): -0.2
-- Unnecessary escalation: -0.3
-
-Rewards are computed at every step, not only at episode end.
-
-## Agent Architecture
-
-The inference agent uses a **hybrid approach** combining rule-based classification with optional LLM integration:
-
-| Component | Method | Logic |
-|-----------|--------|-------|
-| Category | Rule-based | Keyword matching with prioritized categories |
-| Priority | Rule-based | Urgency keyword detection |
-| Action | Rule-based | Category + priority based logic |
-| Reply Template | Rule-mapped | Direct mapping from category to template |
-
-### Category Detection Priority
-
-1. Complaint (emotional indicators)
-2. Billing (financial indicators)
-3. Shipping (delivery indicators)
-4. Account (login/access indicators)
-5. Sales (pricing/business indicators)
-6. Technical (problem indicators)
-7. Other (default)
-
-### Reply Template Mapping
-
-```
-billing → billing_refund / billing_invoice
-technical → tech_troubleshoot / escalate_specialist
-sales → sales_pricing
-account → account_unlock
-complaint → complaint_apology / escalate_specialist
-shipping → shipping_update
-other → archive_no_reply
-```
-
-### Optional LLM Integration
-
-The agent supports OpenAI-compatible LLM APIs via environment variables:
-- `API_BASE_URL`: Base URL for the LLM API
-- `MODEL_NAME`: Model identifier (e.g., `mistralai/Mistral-7B-Instruct-v0.2`)
-- `HF_TOKEN`: API key for authentication
-
-When these are provided, the agent can use LLM for enhanced classification.
-
-## Setup Instructions
-
-### Local Run
+1. Create and activate your virtual environment.
+2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
-python inference.py
 ```
 
-### Docker Run
+3. Configure environment values in .env:
 
-```bash
-docker build -t email-triage-env .
-docker run --rm --env-file .env email-triage-env
-```
-
-## Environment Variables
-
-Create a `.env` file with the following variables:
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `API_BASE_URL` | Base URL for OpenAI-compatible API | Optional |
-| `MODEL_NAME` | LLM model name for inference | Optional |
-| `HF_TOKEN` | API token for authentication | Optional |
-
-Example `.env`:
-```
-API_BASE_URL=https://api-inference.huggingface.co/models
-MODEL_NAME=mistralai/Mistral-7B-Instruct-v0.2
+```dotenv
+API_BASE_URL=https://router.huggingface.co/v1
+MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
 HF_TOKEN=your_token_here
 ```
 
-## Hugging Face Spaces Deployment
+If provider calls fail (quota/rate limits), fallback logic is used where implemented.
 
-This project is configured for Hugging Face Spaces deployment:
+## Running
 
-1. **Space Configuration**: Uses Docker SDK (specified in YAML header)
-2. **Entry Point**: `inference.py` runs automatically on container start
-3. **Environment Variables**: Add `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` in Space Settings > Secrets
-4. **Build Process**: Hugging Face automatically builds the Docker image and runs the environment
+Run the evaluator:
 
-To deploy:
-1. Create a new Space on Hugging Face
-2. Select "Docker" as the SDK
-3. Push this repository to the Space
-4. Add environment variables in Space Settings
-5. The environment will automatically build and run
-
-## Inference Process
-
-The `inference.py` script performs the following:
-
-1. **Load Environment Variables**: Reads `.env` file for API configuration
-2. **Initialize Agent**: Creates a HybridEmailAgent (rule-based with optional LLM)
-3. **Run Tasks**: Executes task_easy, task_medium, and task_hard sequentially
-4. **Environment Loop**: For each task:
-   - Calls `env.reset()` to initialize
-   - Iterates through all 30 emails
-   - Calls `agent.decide_action()` for each email
-   - Calls `env.step(action)` to execute and get reward
-   - Tracks component accuracy (category, priority, action, reply)
-5. **Print Results**: Outputs step rewards, cumulative rewards, and final normalized scores
-
-## Example Output
-
-```
-Email Triage OpenEnv Inference
-API_BASE_URL set: True
-MODEL_NAME: mistralai/Mistral-7B-Instruct-v0.2
-HF_TOKEN set: True
-
-=== Running task_easy ===
-Step 01 | email=E001 | reward=+0.30 | cat=+0.30 pri=+0.00 act=+0.00 rep=+0.00 penalties={} | ok(cat=1 pri=0 act=1 rep=0)
-Step 02 | email=E002 | reward=+0.30 | cat=+0.30 pri=+0.00 act=+0.00 rep=+0.00 penalties={} | ok(cat=1 pri=1 act=1 rep=0)
-...
-Final score (task_easy): 0.9333
-Cumulative reward (task_easy): 8.0000
-Average reward (task_easy): 0.2667
-Agent calls: 30
-
-=== Running task_medium ===
-...
-Final score (task_medium): 0.9000
-
-=== Running task_hard ===
-...
-Final score (task_hard): 0.8917
-
-=== Final Summary ===
-Task 1 (Easy):
-- Final Score: 0.9333
-- Category Accuracy: 93.33%
-
-Task 2 (Medium):
-- Final Score: 0.9000
-- Priority Accuracy: 86.67%
-- Action Accuracy: 90.00%
-
-Task 3 (Hard):
-- Final Score: 0.8917
-- Reply Accuracy: 86.67%
-```
-
-## System Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Email Dataset  │────▶│   Environment   │────▶│   Observation   │
-│   (30 emails)   │     │  (EmailTriage)  │     │  (email_text)   │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                                                        │
-                                                        ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Final Score    │◀────│     Grader      │◀────│     Reward      │
-│    (0-1.0)      │     │  (Deterministic)│     │  (Step-wise)    │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                                                        ▲
-                                                        │
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Reply Template │◀────│     Action      │◀────│     Agent       │
-│ (category-based)│     │ (reply/escalate)│     │ (Hybrid: Rules  │
-└─────────────────┘     └─────────────────┘     │   + Optional LLM)│
-                                                └─────────────────┘
-```
-
-## Baseline Scores
-
-| Task | Score | Category Accuracy | Priority Accuracy | Action Accuracy | Reply Accuracy |
-|------|-------|-------------------|-------------------|-----------------|----------------|
-| Easy | 0.9333 | 93.33% | - | - | - |
-| Medium | 0.9000 | 93.33% | 86.67% | 90.00% | - |
-| Hard | 0.8917 | 93.33% | 86.67% | 90.00% | 86.67% |
-
-## Conclusion
-
-This project is an **OpenEnv AI agent evaluation environment** designed for benchmarking email triage agents. It provides:
-
-- A realistic simulation of customer support workflows
-- Deterministic, reproducible evaluation metrics
-- Multiple difficulty levels to test agent capabilities
-- Easy deployment via Docker and Hugging Face Spaces
-- Compatibility with both rule-based and LLM-based agents
-
-The environment is production-ready and suitable for research, competition, or production agent evaluation.
-
----
-
-
-**License**: MIT  
-**Author**: OpenEnv Contributors  
-**Repository**: https://huggingface.co/spaces/YOUR_USERNAME/email-triage-env
-=======
 ```bash
-pip install -r requirements.txt
 python inference.py
 ```
 
-Optional env vars for OpenAI-compatible endpoint:
+This executes easy, medium, and hard, printing START/STEP/END logs and one final summary line.
 
-```bash
-export API_BASE_URL="https://your-openai-compatible-endpoint/v1"
-export MODEL_NAME="gpt-4o-mini"
-export HF_TOKEN="your_token"
-python inference.py
-```
-
-If `API_BASE_URL` is not set, inference uses deterministic local heuristics.
-
-### Run the API Server (app.py)
-
-The OpenEnv validator and Hugging Face Space health checks require a live server that responds to `POST /reset`.
-
-From repo root:
+Run the API server:
 
 ```bash
 python -m server.app
 ```
 
-Alternative command from the `server/` directory:
+Default bind:
 
-```bash
-uvicorn app:app --host 0.0.0.0 --port 7860
-```
+- host: 0.0.0.0
+- port: 7860
 
-Quick endpoint checks:
+## How To Check
 
-```bash
-curl -X POST http://127.0.0.1:7860/reset -H "Content-Type: application/json" -d '{}'
-curl http://127.0.0.1:7860/state
-```
+Use this API sequence:
 
-### Docker
+1. GET /reset
+2. GET /step
+3. GET /state
+4. GET /health
 
-```bash
-docker build -t email-triage-env .
-docker run --rm \
-  -p 7860:7860 \
-  -e API_BASE_URL="https://your-openai-compatible-endpoint/v1" \
-  -e MODEL_NAME="gpt-4o-mini" \
-  -e HF_TOKEN="your_token" \
-  email-triage-env
-```
+Expected behavior:
 
-It also runs without external endpoint:
+- /reset clears task scores
+- /step runs all tasks and updates scores
+- /state returns per-task scores
 
-```bash
-docker run --rm -p 7860:7860 email-triage-env
-```
+## Notes
 
-Current Docker behavior:
-
-- Container starts the FastAPI server (`python -m server.app`)
-- Server binds to port `7860`
-- Required for Hugging Face `/reset` health checks
-
-### Hugging Face Spaces Deployment
-
-This environment is ready for deployment to Hugging Face Spaces:
-
-1. Create a new Space on Hugging Face with **Docker** SDK.
-2. Add the `openenv` tag to your Space.
-3. Push this repository to the Space.
-4. Set environment variables in Space Settings -> Variables/Secrets:
-   - `API_BASE_URL` (optional - uses heuristics if not set)
-   - `MODEL_NAME` (default: gpt-4o-mini)
-   - `HF_TOKEN` (for API access)
-5. Wait for build/startup and verify endpoint:
-
-```bash
-curl -X POST https://<your-space>.hf.space/reset -H "Content-Type: application/json" -d '{}'
-```
-
-Expected: HTTP `200`.
-
-6. Run validator before submission:
-
-```bash
-openenv validate
-```
-
-And run the submission script from the requirement guide:
-
-```bash
-./scripts/validate-submission.sh https://<your-space>.hf.space .
-```
-
-The Space now starts the API server on startup, not `inference.py`.
-
-## How Inference Works
-
-`inference.py`:
-- Reads `API_BASE_URL`, `MODEL_NAME`, `HF_TOKEN`
-- Creates OpenAI client if endpoint is configured
-- Runs all 3 tasks sequentially
-- Emits strict structured logs:
-  - `[START] ...`
-  - `[STEP] ...`
-  - `[END] ...`
-
-## Example Output
-
-### Heuristic Baseline (No API)
-
-```text
-[START] task_id=task_easy model_name=gpt-4o-mini api_enabled=0 total_steps=30
-[STEP] task_id=task_easy step=01 email_id=E001 reward=0.3000 cumulative_reward=0.3000 category=billing priority=medium action=reply reply_template=general_reply
-...
-[END] task_id=task_easy steps=30 final_score=0.9333 cumulative_reward=8.0000 avg_reward=0.2667 category_accuracy=0.9333 priority_accuracy=0.3000 action_accuracy=0.5667 reply_accuracy=0.0000
-```
-
-### Baseline Scores
-
-| Task | Difficulty | Heuristic Score | Expected LLM Score |
-|------|------------|-----------------|-------------------|
-| task_easy | Easy | 0.8333 | 0.90+ |
-| task_medium | Medium | 0.7667 | 0.85+ |
-| task_hard | Hard | 0.7667 | 0.80+ |
-
+- Keep .env and tokens private.
+- For stable benchmarking, use deterministic mode.
+- For behavior stress tests, enable model-assisted paths.
