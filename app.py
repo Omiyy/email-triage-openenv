@@ -30,6 +30,7 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 VALID_CATEGORIES = [
     "refund",
     "complaint",
+    "promotion",
     "order_status",
     "technical_support",
     "billing",
@@ -59,14 +60,14 @@ class ExtractResponse(BaseModel):
     order_id: str | None = None
     product: str | None = None
     issue: str | None = None
-    intent: str | None = None
-    urgency: str | None = None
+    intent: str = "unknown"
+    urgency: str = "low"
 
 
 class SuggestRequest(BaseModel):
     email: str
-    category: str
-    extracted: ExtractResponse
+    category: str | None = None
+    extracted: ExtractResponse | None = None
 
 
 class SuggestResponse(BaseModel):
@@ -84,6 +85,7 @@ class StepResponse(BaseModel):
     state: str
     reward: float
     done: bool
+    info: dict[str, Any] = Field(default_factory=dict)
 
 
 class StateResponse(BaseModel):
@@ -95,6 +97,7 @@ class ResetResponse(BaseModel):
     state: str
     step: int
     done: bool
+    current_email: dict[str, str]
 
 
 # ============================================================================
@@ -123,7 +126,10 @@ class OpenEnvState:
         return {
             "state": "environment reset",
             "step": self.step_count,
-            "done": self.done
+            "done": self.done,
+            "current_email": {
+                "email": self.current_email
+            },
         }
     
     def get_state(self) -> dict:
@@ -165,20 +171,38 @@ class OpenEnvState:
         return {
             "state": f"classified as: {self.category}",
             "reward": 0.33,
-            "done": False
+            "done": False,
+            "info": {
+                "action": "classify_email",
+                "result": self.category,
+            },
         }
     
     def _extract_entities(self) -> dict:
         """Extract entities from the current email."""
         from app import rule_based_extract
         
-        self.extracted_data = rule_based_extract(self.current_email)
+        try:
+            self.extracted_data = validate_extraction(rule_based_extract(self.current_email)).model_dump()
+        except Exception:
+            self.extracted_data = {
+                "customer_name": None,
+                "order_id": None,
+                "product": None,
+                "issue": None,
+                "intent": "unknown",
+                "urgency": "low",
+            }
         self.step_count += 1
         
         return {
             "state": f"extracted: {json.dumps(self.extracted_data)}",
             "reward": 0.33,
-            "done": False
+            "done": False,
+            "info": {
+                "action": "extract_entities",
+                "result": self.extracted_data,
+            },
         }
     
     def _generate_reply(self) -> dict:
@@ -206,7 +230,11 @@ class OpenEnvState:
         return {
             "state": f"reply generated: {self.response[:100]}...",
             "reward": 0.34,
-            "done": True
+            "done": True,
+            "info": {
+                "action": "generate_reply",
+                "result": self.response,
+            },
         }
     
     def _load_sample_email(self) -> str:
@@ -303,12 +331,13 @@ def validate_extraction(data: dict) -> ExtractResponse:
     # Validate intent against valid categories
     if validated.get("intent"):
         validated["intent"] = validate_category(validated["intent"])
+    else:
+        validated["intent"] = "unknown"
     
     # Validate urgency
-    urgency = validated.get("urgency", "").lower()
+    urgency = str(validated.get("urgency", "")).lower()
     if urgency not in ["high", "medium", "low"]:
-        # Default to "medium" if invalid
-        validated["urgency"] = "medium"
+        validated["urgency"] = "low"
     else:
         validated["urgency"] = urgency
     
@@ -398,14 +427,12 @@ def extract(payload: ExtractRequest) -> dict:
     Extract structured information from email.
     Returns strict JSON with all 6 fields (null if missing).
     """
-    client = get_openai_client()
-    
-    if not client:
-        # Fallback: rule-based extraction
-        data = rule_based_extract(payload.email)
-        return validate_extraction(data).model_dump()
-    
     try:
+        client = get_openai_client()
+        if not client:
+            data = rule_based_extract(payload.email)
+            return validate_extraction(data).model_dump()
+
         response = client.chat.completions.create(
             model=MODEL_NAME,
             temperature=0,
@@ -444,11 +471,21 @@ Return valid JSON only. No markdown, no explanation. All keys must be present.""
                 data = {}
         
         return validate_extraction(data).model_dump()
-    
-    except Exception as exc:
-        # Fallback on error
-        data = rule_based_extract(payload.email)
-        return validate_extraction(data).model_dump()
+
+    except Exception:
+        # Never fail: return safe extraction fallback.
+        try:
+            data = rule_based_extract(payload.email)
+            return validate_extraction(data).model_dump()
+        except Exception:
+            return {
+                "customer_name": None,
+                "order_id": None,
+                "product": None,
+                "issue": None,
+                "intent": "unknown",
+                "urgency": "low",
+            }
 
 
 @app.post("/suggest", response_model=SuggestResponse)
@@ -457,27 +494,44 @@ def suggest(payload: SuggestRequest) -> dict:
     Generate professional reply under 120 words.
     """
     client = get_openai_client()
+
+    category = validate_category(payload.category) if payload.category else classify_email_rule_based(payload.email)
+
+    if payload.extracted is None:
+        try:
+            extracted = validate_extraction(rule_based_extract(payload.email))
+        except Exception:
+            extracted = ExtractResponse(
+                customer_name=None,
+                order_id=None,
+                product=None,
+                issue=None,
+                intent="unknown",
+                urgency="low",
+            )
+    else:
+        extracted = payload.extracted
     
     # Build context from extracted data
     extracted_info = []
-    if payload.extracted.customer_name:
-        extracted_info.append(f"Customer: {payload.extracted.customer_name}")
-    if payload.extracted.order_id:
-        extracted_info.append(f"Order: {payload.extracted.order_id}")
-    if payload.extracted.product:
-        extracted_info.append(f"Product: {payload.extracted.product}")
-    if payload.extracted.issue:
-        extracted_info.append(f"Issue: {payload.extracted.issue}")
-    if payload.extracted.intent:
-        extracted_info.append(f"Intent: {payload.extracted.intent}")
-    if payload.extracted.urgency:
-        extracted_info.append(f"Urgency: {payload.extracted.urgency}")
+    if extracted.customer_name:
+        extracted_info.append(f"Customer: {extracted.customer_name}")
+    if extracted.order_id:
+        extracted_info.append(f"Order: {extracted.order_id}")
+    if extracted.product:
+        extracted_info.append(f"Product: {extracted.product}")
+    if extracted.issue:
+        extracted_info.append(f"Issue: {extracted.issue}")
+    if extracted.intent:
+        extracted_info.append(f"Intent: {extracted.intent}")
+    if extracted.urgency:
+        extracted_info.append(f"Urgency: {extracted.urgency}")
     
     context = "\n".join(extracted_info) if extracted_info else "No additional context."
     
     if not client:
         # Fallback: template-based response
-        response_text = template_based_suggest(payload.email, payload.category, payload.extracted)
+        response_text = template_based_suggest(payload.email, category, extracted)
         return {"response": validate_response(response_text)}
     
     try:
@@ -497,7 +551,7 @@ Be concise but empathetic."""
                 },
                 {
                     "role": "user",
-                    "content": f"""Category: {payload.category}
+                    "content": f"""Category: {category}
 
 Extracted Information:
 {context}
@@ -513,9 +567,9 @@ Write a professional response:"""
         response_text = response.choices[0].message.content.strip()
         return {"response": validate_response(response_text)}
     
-    except Exception as exc:
+    except Exception:
         # Fallback on error
-        response_text = template_based_suggest(payload.email, payload.category, payload.extracted)
+        response_text = template_based_suggest(payload.email, category, extracted)
         return {"response": validate_response(response_text)}
 
 
@@ -568,8 +622,16 @@ def classify_email_rule_based(email: str) -> str:
     """Rule-based classification when LLM unavailable."""
     text = email.lower()
     
-    # Check for urgent first (highest priority)
-    if any(word in text for word in ["urgent", "asap", "emergency", "critical", "immediately"]):
+    # Check for spam first to avoid false general inquiries for scam-like mail.
+    if any(word in text for word in ["lottery", "win", "claim", "prize", "free money", "unsubscribe", "spam"]):
+        return "spam"
+
+    # Promotions are distinct from spam.
+    if any(word in text for word in ["sale", "offer", "discount", "limited time", "deal", "promo"]):
+        return "promotion"
+
+    # Check for urgent next.
+    if any(word in text for word in ["urgent", "asap", "emergency", "critical", "immediately", "today"]):
         return "urgent"
     
     # Check for refund
@@ -577,7 +639,7 @@ def classify_email_rule_based(email: str) -> str:
         return "refund"
     
     # Check for complaint
-    if any(word in text for word in ["complaint", "unhappy", "disappointed", "terrible", "bad", "poor", "worst"]):
+    if any(word in text for word in ["not working", "issue", "problem", "complaint", "unhappy", "disappointed", "terrible", "bad", "poor", "worst"]):
         return "complaint"
     
     # Check for billing
@@ -591,10 +653,6 @@ def classify_email_rule_based(email: str) -> str:
     # Check for technical support
     if any(word in text for word in ["technical", "bug", "error", "crash", "not working", "broken", "issue", "problem"]):
         return "technical_support"
-    
-    # Check for spam
-    if any(word in text for word in ["unsubscribe", "promotion", "marketing", "advertisement", "spam"]):
-        return "spam"
     
     # Default
     return "general_inquiry"
@@ -644,7 +702,7 @@ def rule_based_extract(email: str) -> dict:
             break
     
     # Determine intent (must be one of VALID_CATEGORIES)
-    intent = rule_based_classify(email)
+    intent = classify_email_rule_based(email)
     
     # Determine urgency
     urgency = None

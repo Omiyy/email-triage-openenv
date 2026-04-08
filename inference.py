@@ -365,7 +365,8 @@ def load_local_env(env_path: str = ".env") -> None:
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
+            existing = os.environ.get(key)
+            if key and (existing is None or not existing.strip()):
                 os.environ[key] = value
 
 
@@ -433,12 +434,7 @@ class HybridEmailAgent:
     def _should_use_llm(self, task_id: str) -> bool:
         if self.client is None:
             return False
-        mode = (os.getenv("LLM_TASK_MODE") or "hard").strip().lower()
-        if mode == "all":
-            return True
-        if mode == "hard":
-            return task_id == "task_hard"
-        return False
+        return task_id == "task_hard"
 
     def _normalize_llm_payload(self, raw: Dict[str, str], fallback: Dict[str, str]) -> Dict[str, str]:
         allowed_categories = {"billing", "technical", "sales", "account", "complaint", "shipping", "other"}

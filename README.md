@@ -84,7 +84,7 @@ This executes easy, medium, and hard, printing START/STEP/END logs and one final
 Run the API server:
 
 ```bash
-python -m server.app
+python app.py
 ```
 
 Default bind:
