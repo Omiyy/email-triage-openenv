@@ -15,6 +15,7 @@ from openai import OpenAI
 from src.env import EmailTriageEnv
 from src.graders import clamp_score, safe_score
 from src.models import Action
+from src.score_utils import clamp_score, safe_ratio_score
 
 
 def _fmt_bool(value: bool) -> str:
@@ -577,7 +578,7 @@ def _new_component_metric() -> Dict[str, float]:
 
 
 def _safe_accuracy(correct: int, total: int) -> float:
-    return clamp_score(safe_score(correct=correct, total=total))
+    return safe_ratio_score(correct=correct, total=total)
 
 
 def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, object]:
@@ -713,7 +714,7 @@ def main() -> None:
 
     total_steps = sum(int(result["steps"]) for result in task_results)
     mean_final_score = (
-        sum(float(result["final_score"]) for result in task_results) / len(task_results)
+        clamp_score(sum(float(result["final_score"]) for result in task_results) / len(task_results))
         if task_results
         else 0.01
     )

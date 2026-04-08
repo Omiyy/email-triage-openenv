@@ -103,8 +103,8 @@ Use this API sequence:
 
 Expected behavior:
 
-- /reset initializes environment state and returns the first observation
-- /step processes exactly one email using external action input and returns per-step reward
+- /reset initializes environment state and returns `{ "observation": { "current_email": { "id", "subject", "body" }, "remaining_emails": N } }`
+- /step processes exactly one email using `{ "action": "classify_email" | "extract_entities" | "generate_reply" }` and returns per-step reward
 - /state returns current index and done flag for the active episode
 
 ## Notes

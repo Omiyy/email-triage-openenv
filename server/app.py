@@ -22,6 +22,7 @@ except ImportError:
 from src.env import EmailTriageEnv, OpenEnvEmailTriageEnv
 from src.graders import clamp_score
 from src.models import Action
+from src.score_utils import clamp_score
 
 
 ALLOWED_CATEGORIES = {"billing", "technical", "sales", "account", "complaint", "shipping", "other"}
@@ -94,8 +95,7 @@ _rl_env_lock = Lock()
 
 
 class StepRequest(BaseModel):
-    action_type: Literal["mark_spam", "mark_important", "skip"]
-    email_id: int
+    action: Literal["classify_email", "extract_entities", "generate_reply"]
 
 
 def _combine_text(email: str, subject: str | None) -> str:
@@ -568,10 +568,11 @@ def _run_full_task(task_id: str) -> Dict[str, Any]:
         steps += 1
 
     state = env.state()
-    final_score = round(float(env.final_score()), 2)
+    final_score = round(clamp_score(float(env.final_score())), 2)
     if task_id == "task_hard" and steps > 0:
-        final_score = round(hard_custom_total / steps, 2)
-    final_score = clamp_score(final_score)
+        final_score = round(clamp_score(hard_custom_total / steps), 2)
+    elif task_id == "task_hard":
+        final_score = 0.01
 
     return {
         "score": final_score,
@@ -611,7 +612,7 @@ def health() -> Dict[str, str]:
 @app.post("/reset")
 def reset() -> Dict[str, Any]:
     with _rl_env_lock:
-        return _rl_env.reset()
+        return {"observation": _rl_env.reset()}
 
 
 @app.post("/step")
