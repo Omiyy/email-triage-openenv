@@ -13,6 +13,7 @@ except ImportError:
 from openai import OpenAI
 
 from src.env import EmailTriageEnv
+from src.graders import safe_score
 from src.models import Action
 
 
@@ -576,9 +577,7 @@ def _new_component_metric() -> Dict[str, float]:
 
 
 def _safe_accuracy(correct: int, total: int) -> float:
-    if total == 0:
-        return 0.0
-    return correct / total
+    return safe_score(correct=correct, total=total)
 
 
 def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, object]:
@@ -668,6 +667,8 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
             metric_report[key] = float(accuracy)
 
     final_score = env.final_score()
+    final_score = max(0.01, min(0.99, final_score))
+    print(f"[DEBUG SCORE] {final_score}")
     cumulative_reward = env.state().cumulative_reward
     avg_reward = cumulative_reward / max(step_count, 1)
     
@@ -716,8 +717,10 @@ def main() -> None:
     mean_final_score = (
         sum(float(result["final_score"]) for result in task_results) / len(task_results)
         if task_results
-        else 0.0
+        else 0.01
     )
+    mean_final_score = max(0.01, min(0.99, mean_final_score))
+    print(f"[DEBUG SCORE] {mean_final_score}")
     score_parts = " ".join(
         f"{str(result['task_id'])}={float(result['final_score']):.4f}"
         for result in task_results

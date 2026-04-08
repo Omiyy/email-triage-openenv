@@ -108,7 +108,10 @@ class EmailTriageEnv:
         return next_observation, reward_obj.total, self.done, info
 
     def final_score(self) -> float:
-        return self.grader.score()
+        score = self.grader.score()
+        score = max(0.01, min(0.99, score))
+        print(f"[DEBUG SCORE] {score}")
+        return score
 
     def _observation_for_index(self, index: int) -> Observation:
         email = self.dataset[index]

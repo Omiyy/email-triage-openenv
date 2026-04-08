@@ -4,6 +4,27 @@ from src.models import Action, EmailRecord
 from src.tasks import TaskConfig
 
 
+def safe_score(correct: int, total: int) -> float:
+    if total == 0:
+        score = 0.01
+        print(f"[DEBUG SCORE] {score}")
+        return score
+
+    score = correct / total
+
+    if score <= 0:
+        score = 0.01
+        print(f"[DEBUG SCORE] {score}")
+        return score
+    if score >= 1:
+        score = 0.99
+        print(f"[DEBUG SCORE] {score}")
+        return score
+
+    print(f"[DEBUG SCORE] {score}")
+    return score
+
+
 class DeterministicTriageGrader:
     def __init__(self, task: TaskConfig) -> None:
         self.task = task
@@ -32,6 +53,4 @@ class DeterministicTriageGrader:
                 self.correct += 1
 
     def score(self) -> float:
-        if self.total == 0:
-            return 0.0
-        return self.correct / self.total
+        return safe_score(correct=self.correct, total=self.total)
