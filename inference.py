@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from src.env import EmailTriageEnv
 from src.models import Action
+from src.score_utils import clamp_score, safe_ratio_score
 
 
 def _fmt_bool(value: bool) -> str:
@@ -580,9 +581,7 @@ def _new_component_metric() -> Dict[str, float]:
 
 
 def _safe_accuracy(correct: int, total: int) -> float:
-    if total == 0:
-        return 0.0
-    return correct / total
+    return safe_ratio_score(correct=correct, total=total)
 
 
 def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, object]:
@@ -671,7 +670,7 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
             component_accuracy[key]["accuracy"] = accuracy
             metric_report[key] = float(accuracy)
 
-    final_score = env.final_score()
+    final_score = clamp_score(env.final_score())
     cumulative_reward = env.state().cumulative_reward
     avg_reward = cumulative_reward / max(step_count, 1)
     
@@ -718,9 +717,9 @@ def main() -> None:
 
     total_steps = sum(int(result["steps"]) for result in task_results)
     mean_final_score = (
-        sum(float(result["final_score"]) for result in task_results) / len(task_results)
+        clamp_score(sum(float(result["final_score"]) for result in task_results) / len(task_results))
         if task_results
-        else 0.0
+        else 0.01
     )
     score_parts = " ".join(
         f"{str(result['task_id'])}={float(result['final_score']):.4f}"

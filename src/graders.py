@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models import Action, EmailRecord
+from src.score_utils import safe_ratio_score
 from src.tasks import TaskConfig
 
 
@@ -32,6 +33,4 @@ class DeterministicTriageGrader:
                 self.correct += 1
 
     def score(self) -> float:
-        if self.total == 0:
-            return 0.0
-        return self.correct / self.total
+        return safe_ratio_score(correct=self.correct, total=self.total)

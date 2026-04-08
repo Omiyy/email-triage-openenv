@@ -138,15 +138,7 @@ class OpenEnvEmailTriageEnv:
             raise RuntimeError("Environment is done. Call reset() before step().")
 
         current_email = self.emails[self.current_index]
-        expected_email_id = self._email_id_to_int(current_email.id)
-        provided_email_id = int(action.get("email_id"))
-
-        if provided_email_id != expected_email_id:
-            raise ValueError(
-                f"Expected email_id={expected_email_id} for current step, got {provided_email_id}."
-            )
-
-        predicted_action = str(action.get("action_type", "")).strip()
+        predicted_action = str(action.get("action", "")).strip()
         expected_action = self._expected_action_for_email(current_email)
         correct = predicted_action == expected_action
         reward = 1.0 if correct else -1.0
@@ -158,7 +150,7 @@ class OpenEnvEmailTriageEnv:
         info = {
             "correct": correct,
             "expected_action": expected_action,
-            "processed_email_id": expected_email_id,
+            "processed_email_id": self._email_id_to_int(current_email.id),
         }
         return observation, reward, self.done, info
 
@@ -177,11 +169,14 @@ class OpenEnvEmailTriageEnv:
             }
 
         email = self.emails[self.current_index]
+        body = email.text
+        subject = self._infer_subject(body)
         remaining_emails = len(self.emails) - self.current_index - 1
         return {
             "current_email": {
                 "id": self._email_id_to_int(email.id),
-                "text": email.text,
+                "subject": subject,
+                "body": body,
             },
             "remaining_emails": max(0, remaining_emails),
         }
@@ -195,9 +190,16 @@ class OpenEnvEmailTriageEnv:
 
     @staticmethod
     def _expected_action_for_email(email: Any) -> str:
-        # Treat archived/other emails as spam-like, urgent/high/escalations as important, otherwise skip.
-        if email.action.value == "archive" or email.category.value == "other":
-            return "mark_spam"
-        if email.priority.value in {"high", "urgent"} or email.action.value == "escalate":
-            return "mark_important"
-        return "skip"
+        # Single-action supervision target for each email in this RL loop.
+        if email.action.value == "archive":
+            return "classify_email"
+        if email.action.value == "escalate":
+            return "extract_entities"
+        return "generate_reply"
+
+    @staticmethod
+    def _infer_subject(body: str) -> str:
+        words = [part for part in body.strip().split() if part]
+        if not words:
+            return "Support request"
+        return " ".join(words[:8]).strip(" .,!?:;") or "Support request"
