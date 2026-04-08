@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional, Tuple
 
 from src.dataset import load_synthetic_email_dataset
@@ -115,3 +116,88 @@ class EmailTriageEnv:
 
     def _terminal_observation(self) -> Observation:
         return Observation(email_id="TERMINAL", email_text="", task_id=self.task.task_id)
+
+
+class OpenEnvEmailTriageEnv:
+    """Stateful, single-step email triage environment for external RL agents."""
+
+    def __init__(self) -> None:
+        self._base_emails = load_synthetic_email_dataset()
+        self.emails = list(self._base_emails)
+        self.current_index = 0
+        self.done = False
+
+    def reset(self) -> Dict[str, Any]:
+        self.emails = list(self._base_emails)
+        self.current_index = 0
+        self.done = len(self.emails) == 0
+        return self._build_observation()
+
+    def step(self, action: Dict[str, Any]) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
+        if self.done:
+            raise RuntimeError("Environment is done. Call reset() before step().")
+
+        current_email = self.emails[self.current_index]
+        expected_email_id = self._email_id_to_int(current_email.id)
+        provided_email_id = int(action.get("email_id"))
+
+        if provided_email_id != expected_email_id:
+            raise ValueError(
+                f"Expected email_id={expected_email_id} for current step, got {provided_email_id}."
+            )
+
+        predicted_action = str(action.get("action_type", "")).strip()
+        expected_action = self._expected_action_for_email(current_email)
+        correct = predicted_action == expected_action
+        reward = 1.0 if correct else -1.0
+
+        self.current_index += 1
+        self.done = self.current_index >= len(self.emails)
+
+        observation = self._build_observation()
+        info = {
+            "correct": correct,
+            "expected_action": expected_action,
+            "processed_email_id": expected_email_id,
+        }
+        return observation, reward, self.done, info
+
+    def state(self) -> Dict[str, Any]:
+        return {
+            "current_index": self.current_index,
+            "total_emails": len(self.emails),
+            "done": self.done,
+        }
+
+    def _build_observation(self) -> Dict[str, Any]:
+        if self.done:
+            return {
+                "current_email": None,
+                "remaining_emails": 0,
+            }
+
+        email = self.emails[self.current_index]
+        remaining_emails = len(self.emails) - self.current_index - 1
+        return {
+            "current_email": {
+                "id": self._email_id_to_int(email.id),
+                "text": email.text,
+            },
+            "remaining_emails": max(0, remaining_emails),
+        }
+
+    @staticmethod
+    def _email_id_to_int(email_id: str) -> int:
+        match = re.search(r"(\d+)$", email_id)
+        if not match:
+            raise ValueError(f"Invalid dataset email id format: {email_id}")
+        return int(match.group(1))
+
+    @staticmethod
+    def _expected_action_for_email(email: Any) -> str:
+        # Treat archived/other emails as spam-like, urgent/high/escalations as important, otherwise skip.
+        if email.action.value == "archive" or email.category.value == "other":
+            return "mark_spam"
+        if email.priority.value in {"high", "urgent"} or email.action.value == "escalate":
+            return "mark_important"
+        return "skip"

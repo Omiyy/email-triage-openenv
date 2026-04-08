@@ -1,36 +1,6 @@
-name: email-triage-env
-version: 1.0.0
-description: OpenEnv-compatible Email Triage environment with deterministic rule-based grading.
-entrypoint: src/env.py:EmailTriageEnv
-language: python
-metadata:
-  domain: customer-support
-  deterministic_grader: true
-  dataset_type: synthetic
-  min_cpu: "2"
-  min_memory_gb: "8"
-tasks:
-  - id: task_easy
-    name: Email Category Classification
-    description: Predict category only.
-    required_outputs: [category]
-  - id: task_medium
-    name: Category and Priority Assignment
-    description: Predict category and priority.
-    required_outputs: [category, priority]
-  - id: task_hard
-    name: Full Email Triage
-    description: Predict category, priority, action, and reply_template.
-    required_outputs: [category, priority, action, reply_template]
-observation_space:
-  email_id: string
-  email_text: string
-  task_id: string
-  valid_categories: list[string]
-  valid_priorities: list[string]
-  valid_actions: list[string]
-action_space:
-  category: [billing, technical, sales, account, complaint, shipping, other]
-  priority: [low, medium, high, urgent]
-  action: [reply, escalate, archive]
-  reply_template: [billing_refund, billing_invoice, account_unlock, escalate_specialist, tech_troubleshoot, sales_pricing, shipping_update, complaint_apology, archive_no_reply]
+name: email-triage
+description: Email triage environment
+actions:
+  - classify_email
+  - extract_entities
+  - generate_reply

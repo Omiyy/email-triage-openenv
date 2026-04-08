@@ -4,8 +4,9 @@ import json
 import os
 import random
 import re
+from threading import Lock
 from collections import Counter
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -18,7 +19,7 @@ try:
 except ImportError:
     pass
 
-from src.env import EmailTriageEnv
+from src.env import EmailTriageEnv, OpenEnvEmailTriageEnv
 from src.models import Action
 
 
@@ -87,6 +88,13 @@ def _new_scoreboard() -> Dict[str, Dict[str, Any]]:
 _scoreboard = _new_scoreboard()
 _scoreboard_status = "idle"
 _llm_client: OpenAI | None = None
+_rl_env = OpenEnvEmailTriageEnv()
+_rl_env_lock = Lock()
+
+
+class StepRequest(BaseModel):
+    action_type: Literal["mark_spam", "mark_important", "skip"]
+    email_id: int
 
 
 def _combine_text(email: str, subject: str | None) -> str:
@@ -596,45 +604,36 @@ def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/reset")
+@app.post("/reset")
 def reset() -> Dict[str, Any]:
-    global _scoreboard
-    global _scoreboard_status
-    _scoreboard = _new_scoreboard()
-    _scoreboard_status = "reset"
+    with _rl_env_lock:
+        return _rl_env.reset()
+
+
+@app.post("/step")
+def step(payload: StepRequest) -> Dict[str, Any]:
+    with _rl_env_lock:
+        try:
+            observation, reward, done, info = _rl_env.step(payload.model_dump())
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     return {
-        "message": "state got reset",
-        "email_count": _total_email_count(),
-    }
-
-
-@app.get("/step")
-def run_all_tasks_step() -> Dict[str, Any]:
-    global _scoreboard
-    global _scoreboard_status
-
-    try:
-        for task_id in _TASK_IDS:
-            _scoreboard[task_id] = _run_full_task(task_id)
-    except Exception as exc:
-        _scoreboard_status = "failed"
-        raise HTTPException(status_code=500, detail=f"failed to run all tasks: {exc}") from exc
-
-    _scoreboard_status = "completed"
-    return {
-        "message": "all tasks executed",
-        "tasks_processed": len(_TASK_IDS),
-        "task_hard_llm_calls": int(_scoreboard["task_hard"].get("llm_calls", 0)),
-        "task_hard_llm_enabled": bool(API_TOKEN),
+        "observation": observation,
+        "reward": reward,
+        "done": done,
+        "info": {
+            "correct": bool(info.get("correct", False)),
+        },
     }
 
 
 @app.get("/state")
 def state() -> Dict[str, Any]:
-    task_scores = {task_id: round(float(data["score"]), 2) for task_id, data in _scoreboard.items()}
-    return {
-        "scores": task_scores,
-    }
+    with _rl_env_lock:
+        return _rl_env.state()
 
 
 def main() -> None:

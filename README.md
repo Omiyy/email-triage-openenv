@@ -96,16 +96,16 @@ Default bind:
 
 Use this API sequence:
 
-1. GET /reset
-2. GET /step
+1. POST /reset
+2. POST /step (repeat until done=true)
 3. GET /state
 4. GET /health
 
 Expected behavior:
 
-- /reset clears task scores
-- /step runs all tasks and updates scores
-- /state returns per-task scores
+- /reset initializes environment state and returns the first observation
+- /step processes exactly one email using external action input and returns per-step reward
+- /state returns current index and done flag for the active episode
 
 ## Notes
 
