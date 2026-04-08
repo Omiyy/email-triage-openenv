@@ -4,25 +4,23 @@ from src.models import Action, EmailRecord
 from src.tasks import TaskConfig
 
 
-def safe_score(correct: int, total: int) -> float:
-    if total == 0:
-        score = 0.01
-        print(f"[DEBUG SCORE] {score}")
-        return score
-
-    score = correct / total
-
+def clamp_score(score: float) -> float:
     if score <= 0:
         score = 0.01
-        print(f"[DEBUG SCORE] {score}")
-        return score
-    if score >= 1:
+    elif score >= 1:
         score = 0.99
-        print(f"[DEBUG SCORE] {score}")
-        return score
 
+    assert 0 < score < 1, f"Invalid score detected: {score}"
     print(f"[DEBUG SCORE] {score}")
     return score
+
+
+def safe_score(correct: int, total: int) -> float:
+    if total == 0:
+        return clamp_score(0.01)
+
+    score = correct / total
+    return clamp_score(score)
 
 
 class DeterministicTriageGrader:

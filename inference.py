@@ -13,7 +13,7 @@ except ImportError:
 from openai import OpenAI
 
 from src.env import EmailTriageEnv
-from src.graders import safe_score
+from src.graders import clamp_score, safe_score
 from src.models import Action
 
 
@@ -573,11 +573,11 @@ def make_client() -> OpenAI | None:
 
 
 def _new_component_metric() -> Dict[str, float]:
-    return {"correct": 0, "total": 0, "accuracy": 0.0}
+    return {"correct": 0, "total": 0, "accuracy": 0.01}
 
 
 def _safe_accuracy(correct: int, total: int) -> float:
-    return safe_score(correct=correct, total=total)
+    return clamp_score(safe_score(correct=correct, total=total))
 
 
 def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, object]:
@@ -663,12 +663,10 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
             correct = int(component_accuracy[key]["correct"])
             total = int(component_accuracy[key]["total"])
             accuracy = _safe_accuracy(correct=correct, total=total)
-            component_accuracy[key]["accuracy"] = accuracy
-            metric_report[key] = float(accuracy)
+            component_accuracy[key]["accuracy"] = clamp_score(accuracy)
+            metric_report[key] = float(clamp_score(accuracy))
 
-    final_score = env.final_score()
-    final_score = max(0.01, min(0.99, final_score))
-    print(f"[DEBUG SCORE] {final_score}")
+    final_score = clamp_score(env.final_score())
     cumulative_reward = env.state().cumulative_reward
     avg_reward = cumulative_reward / max(step_count, 1)
     
@@ -719,8 +717,7 @@ def main() -> None:
         if task_results
         else 0.01
     )
-    mean_final_score = max(0.01, min(0.99, mean_final_score))
-    print(f"[DEBUG SCORE] {mean_final_score}")
+    mean_final_score = clamp_score(mean_final_score)
     score_parts = " ".join(
         f"{str(result['task_id'])}={float(result['final_score']):.4f}"
         for result in task_results
