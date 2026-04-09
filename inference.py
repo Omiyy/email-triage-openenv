@@ -725,12 +725,17 @@ def main() -> None:
         task_results.append(result)
 
     total_steps = sum(int(result["steps"]) for result in task_results)
-    mean_final_score = (
-        SAFE_SCORE(sum(float(result["final_score"]) for result in task_results) / len(task_results))
-        if task_results
-        else SAFE_SCORE(0.01)
-    )
+    if task_results:
+        mean_final_score = sum(float(result["final_score"]) for result in task_results) / len(task_results)
+    else:
+        mean_final_score = 0.01
+
+    # apply safe clamp
     mean_final_score = SAFE_SCORE(mean_final_score)
+
+    # extra safety to avoid high-boundary rounding
+    if mean_final_score > 0.95:
+        mean_final_score = 0.94
     score_parts = " ".join(
         f"{str(result['task_id'])}={float(result['final_score']):.4f}"
         for result in task_results
