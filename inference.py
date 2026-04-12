@@ -573,7 +573,7 @@ def make_client() -> OpenAI | None:
 
 
 def _new_component_metric() -> Dict[str, float]:
-    return {"correct": 0, "total": 0, "accuracy": 0.01}
+    return {"correct": 0, "total": 0, "accuracy": 0.05}
 
 
 def _safe_accuracy(correct: int, total: int) -> float:
@@ -730,7 +730,7 @@ def main() -> None:
     if task_results:
         mean_final_score = sum(float(result["final_score"]) for result in task_results) / len(task_results)
     else:
-        mean_final_score = 0.01
+        mean_final_score = 0.05
 
     mean_final_score = SAFE_SCORE(mean_final_score)
 

@@ -15,12 +15,12 @@ def SAFE_REWARD(r: float) -> float:
     try:
         r = float(r)
     except:
-        return 0.01
+        return 0.5
 
-    if r <= 0:
-        return 0.01
-    if r >= 1:
-        return 0.99
+    if r <= 0.05:
+        return 0.05
+    if r >= 0.95:
+        return 0.95
 
     return r
 
@@ -158,7 +158,7 @@ class OpenEnvEmailTriageEnv:
         predicted_action = str(action.get("action", "")).strip()
         expected_action = self._expected_action_for_email(current_email)
         correct = predicted_action == expected_action
-        reward = 1.0 if correct else 0.01
+        reward = 0.95 if correct else 0.05
         reward = SAFE_REWARD(reward)
 
         self.current_index += 1

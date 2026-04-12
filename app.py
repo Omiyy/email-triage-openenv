@@ -11,7 +11,9 @@ import re
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from src.score_utils import sanitize_response_payload
@@ -145,7 +147,7 @@ class OpenEnvState:
         if self.done:
             return {
                 "state": "environment already done",
-                "reward": 0.01,
+                "reward": 0.05,
                 "done": True
             }
         
@@ -158,7 +160,7 @@ class OpenEnvState:
         else:
             return {
                 "state": f"invalid action: {action}",
-                "reward": 0.01,
+                "reward": 0.05,
                 "done": self.done
             }
     
@@ -267,6 +269,28 @@ app = FastAPI(
 )
 
 
+def safe_json_response(payload: Any, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(content=sanitize_response_payload(payload), status_code=status_code)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if not isinstance(detail, (dict, list, str, int, float, bool, type(None))):
+        detail = str(detail)
+    return safe_json_response({"detail": detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    return safe_json_response({"detail": exc.errors()}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    return safe_json_response({"detail": "Internal server error", "error": str(exc)}, status_code=500)
+
+
 def get_openai_client() -> OpenAI | None:
     """Initialize OpenAI client from environment variables."""
     if not API_BASE_URL:
@@ -367,7 +391,7 @@ def validate_response(text: str) -> str:
 @app.get("/")
 def root() -> dict:
     """Root endpoint - API info."""
-    return sanitize_response_payload({
+    return safe_json_response({
         "message": "Email Triage Hackathon API is running",
         "version": "2.0.0",
         "endpoints": {
@@ -381,7 +405,7 @@ def root() -> dict:
 @app.get("/health")
 def health() -> dict:
     """Health check endpoint."""
-    return sanitize_response_payload({"status": "ok"})
+    return safe_json_response({"status": "ok"})
 
 
 @app.post("/classify", response_model=ClassifyResponse)
@@ -394,7 +418,7 @@ def classify(payload: ClassifyRequest) -> dict:
     if not client:
         # Fallback: rule-based classification
         category = classify_email_rule_based(payload.email)
-        return sanitize_response_payload({"category": validate_category(category)})
+        return safe_json_response({"category": validate_category(category)})
     
     try:
         response = client.chat.completions.create(
@@ -414,12 +438,12 @@ Respond with ONLY the category name, nothing else."""
         raw_category = response.choices[0].message.content.strip()
         validated_category = validate_category(raw_category)
         
-        return sanitize_response_payload({"category": validated_category})
+        return safe_json_response({"category": validated_category})
     
     except Exception as exc:
         # Fallback on error
         category = classify_email_rule_based(payload.email)
-        return sanitize_response_payload({"category": validate_category(category)})
+        return safe_json_response({"category": validate_category(category)})
 
 
 @app.post("/extract", response_model=ExtractResponse)
@@ -432,7 +456,7 @@ def extract(payload: ExtractRequest) -> dict:
         client = get_openai_client()
         if not client:
             data = rule_based_extract(payload.email)
-            return sanitize_response_payload(validate_extraction(data).model_dump())
+            return safe_json_response(validate_extraction(data).model_dump())
 
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -471,15 +495,15 @@ Return valid JSON only. No markdown, no explanation. All keys must be present.""
             else:
                 data = {}
         
-        return sanitize_response_payload(validate_extraction(data).model_dump())
+        return safe_json_response(validate_extraction(data).model_dump())
 
     except Exception:
         # Never fail: return safe extraction fallback.
         try:
             data = rule_based_extract(payload.email)
-            return sanitize_response_payload(validate_extraction(data).model_dump())
+            return safe_json_response(validate_extraction(data).model_dump())
         except Exception:
-            return sanitize_response_payload({
+            return safe_json_response({
                 "customer_name": None,
                 "order_id": None,
                 "product": None,
@@ -533,7 +557,7 @@ def suggest(payload: SuggestRequest) -> dict:
     if not client:
         # Fallback: template-based response
         response_text = template_based_suggest(payload.email, category, extracted)
-        return sanitize_response_payload({"response": validate_response(response_text)})
+        return safe_json_response({"response": validate_response(response_text)})
     
     try:
         response = client.chat.completions.create(
@@ -566,12 +590,12 @@ Write a professional response:"""
         )
         
         response_text = response.choices[0].message.content.strip()
-        return sanitize_response_payload({"response": validate_response(response_text)})
+        return safe_json_response({"response": validate_response(response_text)})
     
     except Exception:
         # Fallback on error
         response_text = template_based_suggest(payload.email, category, extracted)
-        return sanitize_response_payload({"response": validate_response(response_text)})
+        return safe_json_response({"response": validate_response(response_text)})
 
 
 # ============================================================================
@@ -584,7 +608,7 @@ def reset() -> dict:
     Initializes step counter to 0, sets done = false, loads sample email.
     """
     result = env_state.reset()
-    return sanitize_response_payload(result)
+    return safe_json_response(result)
 
 
 @app.post("/step", response_model=StepResponse)
@@ -603,7 +627,7 @@ def step(payload: StepRequest) -> dict:
     - generate_reply: 0.34
     """
     result = env_state.step(payload.action)
-    return sanitize_response_payload(result)
+    return safe_json_response(result)
 
 
 @app.get("/state", response_model=StateResponse)
@@ -613,7 +637,7 @@ def state() -> dict:
     Returns step count and done status.
     """
     result = env_state.get_state()
-    return sanitize_response_payload(result)
+    return safe_json_response(result)
 
 
 # ============================================================================
