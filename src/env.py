@@ -8,6 +8,7 @@ from src.graders import DeterministicTriageGrader
 from src.score_utils import SAFE_SCORE
 from src.models import Action, Observation, State
 from src.rewards import compute_step_reward
+from src.score_utils import clamp_score
 from src.tasks import TaskConfig, get_task_config
 
 
@@ -158,8 +159,7 @@ class OpenEnvEmailTriageEnv:
         predicted_action = str(action.get("action", "")).strip()
         expected_action = self._expected_action_for_email(current_email)
         correct = predicted_action == expected_action
-        reward = 0.95 if correct else 0.05
-        reward = SAFE_REWARD(reward)
+        reward = clamp_score(0.99 if correct else 0.01)
 
         self.current_index += 1
         self.done = self.current_index >= len(self.emails)

@@ -602,7 +602,7 @@ def _run_full_task(task_id: str) -> Dict[str, Any]:
     return sanitize_response_payload({
         "score": final_score,
         "steps": steps,
-        "cumulative_reward": round(float(state.cumulative_reward), 2),
+        "cumulative_reward": round(SAFE_SCORE(float(state.cumulative_reward)), 2),
         "llm_calls": llm_calls,
         "done": True,
     })

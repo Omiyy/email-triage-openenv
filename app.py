@@ -11,9 +11,8 @@ import re
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from openai import OpenAI
 from src.score_utils import sanitize_response_payload
@@ -389,17 +388,9 @@ def validate_response(text: str) -> str:
 # API ENDPOINTS
 # ============================================================================
 @app.get("/")
-def root() -> dict:
-    """Root endpoint - API info."""
-    return safe_json_response({
-        "message": "Email Triage Hackathon API is running",
-        "version": "2.0.0",
-        "endpoints": {
-            "classify": "POST /classify",
-            "extract": "POST /extract",
-            "suggest": "POST /suggest"
-        }
-    })
+def root() -> RedirectResponse:
+    """Send users to interactive FastAPI docs from the Space App tab."""
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
