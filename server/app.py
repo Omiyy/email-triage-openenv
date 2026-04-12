@@ -21,7 +21,7 @@ except ImportError:
 
 from src.env import EmailTriageEnv, OpenEnvEmailTriageEnv
 from src.models import Action
-from src.score_utils import SAFE_SCORE
+from src.score_utils import SAFE_SCORE, sanitize_response_payload
 
 
 ALLOWED_CATEGORIES = {"billing", "technical", "sales", "account", "complaint", "shipping", "other"}
@@ -575,13 +575,13 @@ def _run_full_task(task_id: str) -> Dict[str, Any]:
     if final_score >= 0.90:
         final_score = 0.89
 
-    return {
+    return sanitize_response_payload({
         "score": final_score,
         "steps": steps,
         "cumulative_reward": round(float(state.cumulative_reward), 2),
         "llm_calls": llm_calls,
         "done": True,
-    }
+    })
 
 
 def _scoreboard_overall() -> float:
@@ -601,22 +601,22 @@ def _total_email_count() -> int:
 
 @app.get("/")
 def root() -> Dict[str, str]:
-    return {
+    return sanitize_response_payload({
         "name": app.title,
         "version": app.version,
         "openapi": "/openapi.json",
-    }
+    })
 
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return sanitize_response_payload({"status": "ok"})
 
 
 @app.post("/reset")
 def reset() -> Dict[str, Any]:
     with _rl_env_lock:
-        return {"observation": _rl_env.reset()}
+        return sanitize_response_payload({"observation": _rl_env.reset()})
 
 
 @app.post("/step")
@@ -629,20 +629,20 @@ def step(payload: StepRequest) -> Dict[str, Any]:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {
+    return sanitize_response_payload({
         "observation": observation,
         "reward": reward,
         "done": done,
         "info": {
             "correct": bool(info.get("correct", False)),
         },
-    }
+    })
 
 
 @app.get("/state")
 def state() -> Dict[str, Any]:
     with _rl_env_lock:
-        return _rl_env.state()
+        return sanitize_response_payload(_rl_env.state())
 
 
 def main() -> None:

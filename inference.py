@@ -164,7 +164,7 @@ def calculate_heuristic_confidence(email_text: str, category: str) -> float:
     if any(word in text for word in urgency_words):
         confidence += 0.1
     
-    return min(confidence, 1.0)
+    return SAFE_SCORE(confidence)
 
 
 def heuristic_policy_with_confidence(email_text: str) -> tuple[Dict[str, str], float]:
