@@ -9,7 +9,9 @@ from collections import Counter
 from typing import Any, Dict, Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -21,7 +23,7 @@ except ImportError:
 
 from src.env import EmailTriageEnv, OpenEnvEmailTriageEnv
 from src.models import Action
-from src.score_utils import SAFE_SCORE
+from src.score_utils import SAFE_SCORE, sanitize_response_payload
 
 
 ALLOWED_CATEGORIES = {"billing", "technical", "sales", "account", "complaint", "shipping", "other"}
@@ -74,10 +76,32 @@ app = FastAPI(
 _TASK_IDS = ("task_easy", "task_medium", "task_hard")
 
 
+def safe_json_response(payload: Any, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(content=sanitize_response_payload(payload), status_code=status_code)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if not isinstance(detail, (dict, list, str, int, float, bool, type(None))):
+        detail = str(detail)
+    return safe_json_response({"detail": detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    return safe_json_response({"detail": exc.errors()}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    return safe_json_response({"detail": "Internal server error", "error": str(exc)}, status_code=500)
+
+
 def _new_scoreboard() -> Dict[str, Dict[str, Any]]:
     return {
         task_id: {
-            "score": SAFE_SCORE(0.01),
+            "score": SAFE_SCORE(0.05),
             "steps": 0,
             "cumulative_reward": 0.0,
             "done": False,
@@ -506,7 +530,7 @@ def _fallback_one_line_reply(email: str, subject: str) -> str:
 
 def _reply_quality_component(reply: str, email: str, subject: str) -> float:
     if not reply:
-        return SAFE_SCORE(0.01)
+        return SAFE_SCORE(0.05)
 
     combined = f"{subject} {email}".lower()
     reply_lower = reply.lower()
@@ -514,7 +538,7 @@ def _reply_quality_component(reply: str, email: str, subject: str) -> float:
     email_tokens = re.findall(r"[a-z0-9']+", combined)
     reply_tokens = re.findall(r"[a-z0-9']+", reply_lower)
     if not reply_tokens:
-        return SAFE_SCORE(0.01)
+        return SAFE_SCORE(0.05)
 
     overlap = sum((Counter(reply_tokens) & Counter(email_tokens)).values())
     overlap_ratio = overlap / max(1, len(set(email_tokens)))
@@ -525,8 +549,8 @@ def _reply_quality_component(reply: str, email: str, subject: str) -> float:
     if any(k in reply_lower for k in ("we will", "i will", "within", "next", "follow up", "update")):
         politeness += 0.4
 
-    length_score = min(1.0, len(reply_tokens) / 16.0)
-    raw = 0.45 * min(1.0, overlap_ratio * 5.0) + 0.35 * politeness + 0.20 * length_score
+    length_score = min(0.95, len(reply_tokens) / 16.0)
+    raw = 0.45 * min(0.95, overlap_ratio * 5.0) + 0.35 * politeness + 0.20 * length_score
     score = round(max(0.0, min(0.3, raw * 0.3)), 4)
     return SAFE_SCORE(score)
 
@@ -560,7 +584,7 @@ def _run_full_task(task_id: str) -> Dict[str, Any]:
             hard_custom_total += max(
                 0.0,
                 min(
-                    1.0,
+                    0.95,
                     base_without_template + _reply_quality_component(reply=llm_reply, email=current_email_text, subject=subject),
                 ),
             )
@@ -571,22 +595,22 @@ def _run_full_task(task_id: str) -> Dict[str, Any]:
     if task_id == "task_hard" and steps > 0:
         final_score = round(SAFE_SCORE(hard_custom_total / steps), 2)
     elif task_id == "task_hard":
-        final_score = round(SAFE_SCORE(0.01), 2)
+        final_score = round(SAFE_SCORE(0.05), 2)
     if final_score >= 0.90:
         final_score = 0.89
 
-    return {
+    return sanitize_response_payload({
         "score": final_score,
         "steps": steps,
         "cumulative_reward": round(SAFE_SCORE(float(state.cumulative_reward)), 2),
         "llm_calls": llm_calls,
         "done": True,
-    }
+    })
 
 
 def _scoreboard_overall() -> float:
     if not _scoreboard:
-        return SAFE_SCORE(0.01)
+        return SAFE_SCORE(0.05)
     total = sum(float(task_data["score"]) for task_data in _scoreboard.values())
     score = round(total / len(_scoreboard), 2)
     score = SAFE_SCORE(score)
@@ -601,22 +625,22 @@ def _total_email_count() -> int:
 
 @app.get("/")
 def root() -> Dict[str, str]:
-    return {
+    return safe_json_response({
         "name": app.title,
         "version": app.version,
         "openapi": "/openapi.json",
-    }
+    })
 
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok"}
+    return safe_json_response({"status": "ok"})
 
 
 @app.post("/reset")
 def reset() -> Dict[str, Any]:
     with _rl_env_lock:
-        return {"observation": _rl_env.reset()}
+        return safe_json_response({"observation": _rl_env.reset()})
 
 
 @app.post("/step")
@@ -629,20 +653,20 @@ def step(payload: StepRequest) -> Dict[str, Any]:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {
+    return safe_json_response({
         "observation": observation,
         "reward": reward,
         "done": done,
         "info": {
             "correct": bool(info.get("correct", False)),
         },
-    }
+    })
 
 
 @app.get("/state")
 def state() -> Dict[str, Any]:
     with _rl_env_lock:
-        return _rl_env.state()
+        return safe_json_response(_rl_env.state())
 
 
 def main() -> None:

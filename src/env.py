@@ -16,12 +16,12 @@ def SAFE_REWARD(r: float) -> float:
     try:
         r = float(r)
     except:
-        return 0.01
+        return 0.5
 
-    if r <= 0:
-        return 0.01
-    if r >= 1:
-        return 0.99
+    if r <= 0.05:
+        return 0.05
+    if r >= 0.95:
+        return 0.95
 
     return r
 
