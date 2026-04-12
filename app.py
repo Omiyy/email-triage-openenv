@@ -144,7 +144,7 @@ class OpenEnvState:
         if self.done:
             return {
                 "state": "environment already done",
-                "reward": 0.0,
+                "reward": 0.01,
                 "done": True
             }
         
@@ -157,7 +157,7 @@ class OpenEnvState:
         else:
             return {
                 "state": f"invalid action: {action}",
-                "reward": 0.0,
+                "reward": 0.01,
                 "done": self.done
             }
     
