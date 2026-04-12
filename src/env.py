@@ -63,6 +63,7 @@ class EmailTriageEnv:
 
         current_email = self.dataset[self.index]
         reward_obj = compute_step_reward(action=action, truth=current_email, task=self.task)
+        reward = SAFE_SCORE(reward_obj.total)
         self.grader.update(action=action, truth=current_email)
 
         # Update tracking statistics
@@ -77,8 +78,8 @@ class EmailTriageEnv:
         if action.priority and action.priority.value == "urgent":
             self.urgent_handled += 1
 
-        self.last_reward = reward_obj.total
-        self.cumulative_reward += reward_obj.total
+        self.last_reward = reward
+        self.cumulative_reward += reward
 
         self.index += 1
         self.done = self.index >= len(self.dataset)
@@ -106,7 +107,7 @@ class EmailTriageEnv:
                 "urgent_handled": self.urgent_handled,
             },
         }
-        return next_observation, reward_obj.total, self.done, info
+        return next_observation, reward, self.done, info
 
     def final_score(self) -> float:
         return SAFE_SCORE(self.grader.score())
@@ -142,7 +143,7 @@ class OpenEnvEmailTriageEnv:
         predicted_action = str(action.get("action", "")).strip()
         expected_action = self._expected_action_for_email(current_email)
         correct = predicted_action == expected_action
-        reward = 1.0 if correct else -1.0
+        reward = SAFE_SCORE(1.0 if correct else -1.0)
 
         self.current_index += 1
         self.done = self.current_index >= len(self.emails)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.models import Action, EmailRecord, Reward, TriageAction
+from src.score_utils import SAFE_SCORE
 from src.tasks import TaskConfig
 
 
@@ -39,6 +40,7 @@ def compute_step_reward(action: Action, truth: EmailRecord, task: TaskConfig) ->
         penalties["unnecessary_escalation"] = UNNECESSARY_ESCALATION_PENALTY
 
     total = category_component + priority_component + action_component + reply_component + sum(penalties.values())
+    total = SAFE_SCORE(total)
 
     return Reward(
         total=total,

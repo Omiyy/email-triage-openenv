@@ -21,7 +21,7 @@ except ImportError:
 
 from src.env import EmailTriageEnv, OpenEnvEmailTriageEnv
 from src.models import Action
-    from src.score_utils import SAFE_SCORE
+from src.score_utils import SAFE_SCORE
 
 
 ALLOWED_CATEGORIES = {"billing", "technical", "sales", "account", "complaint", "shipping", "other"}
@@ -77,7 +77,7 @@ _TASK_IDS = ("task_easy", "task_medium", "task_hard")
 def _new_scoreboard() -> Dict[str, Dict[str, Any]]:
     return {
         task_id: {
-            "score": 0.0,
+            "score": SAFE_SCORE(0.01),
             "steps": 0,
             "cumulative_reward": 0.0,
             "done": False,

@@ -6,7 +6,8 @@ from src.tasks import TaskConfig
 
 
 def safe_score(correct: int, total: int) -> float:
-    return SAFE_SCORE(safe_ratio_score(correct=correct, total=total))
+    score = safe_ratio_score(correct=correct, total=total)
+    return SAFE_SCORE(score)
 
 
 class DeterministicTriageGrader:
@@ -37,4 +38,5 @@ class DeterministicTriageGrader:
                 self.correct += 1
 
     def score(self) -> float:
-        return SAFE_SCORE(safe_ratio_score(correct=self.correct, total=self.total))
+        score = safe_ratio_score(correct=self.correct, total=self.total)
+        return SAFE_SCORE(score)

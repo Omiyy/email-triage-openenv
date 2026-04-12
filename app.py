@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from openai import OpenAI
+from src.score_utils import SAFE_SCORE
 
 
 # ============================================================================
@@ -144,7 +145,7 @@ class OpenEnvState:
         if self.done:
             return {
                 "state": "environment already done",
-                "reward": 0.0,
+                "reward": SAFE_SCORE(0.0),
                 "done": True
             }
         
@@ -157,7 +158,7 @@ class OpenEnvState:
         else:
             return {
                 "state": f"invalid action: {action}",
-                "reward": 0.0,
+                "reward": SAFE_SCORE(0.0),
                 "done": self.done
             }
     
@@ -170,7 +171,7 @@ class OpenEnvState:
         
         return {
             "state": f"classified as: {self.category}",
-            "reward": 0.33,
+            "reward": SAFE_SCORE(0.33),
             "done": False,
             "info": {
                 "action": "classify_email",
@@ -197,7 +198,7 @@ class OpenEnvState:
         
         return {
             "state": f"extracted: {json.dumps(self.extracted_data)}",
-            "reward": 0.33,
+            "reward": SAFE_SCORE(0.33),
             "done": False,
             "info": {
                 "action": "extract_entities",
@@ -229,7 +230,7 @@ class OpenEnvState:
         
         return {
             "state": f"reply generated: {self.response[:100]}...",
-            "reward": 0.34,
+            "reward": SAFE_SCORE(0.34),
             "done": True,
             "info": {
                 "action": "generate_reply",
