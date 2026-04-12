@@ -17,6 +17,11 @@ from src.models import Action
 from src.score_utils import SAFE_SCORE, safe_ratio_score
 
 
+def _display_score(value: float) -> float:
+    # Keep reported scores strictly inside (0, 1) even after 2-decimal rounding.
+    return max(0.01, min(0.99, float(value)))
+
+
 def _fmt_bool(value: bool) -> str:
     return "1" if value else "0"
 
@@ -70,13 +75,14 @@ def _emit_step(
     action: str | None,
     reply_template: str | None,
 ) -> None:
+    reward_display = _display_score(reward)
     line = (
         "[STEP]"
         f" task_id={task_id}"
         f" step={step:02d}"
         f" email_id={email_id}"
         f" email=\"{email}\""
-        f" reward={reward:.2f}"
+        f" reward={reward_display:.2f}"
         f" cumulative_reward={cumulative_reward:.2f}"
         f" category={category}"
     )
@@ -100,6 +106,9 @@ def _emit_end(
     action_accuracy: float | None,
     reply_accuracy: float | None,
 ) -> None:
+    final_score = _display_score(final_score)
+    avg_reward = _display_score(avg_reward)
+
     line = (
         "[END]"
         f" task_id={task_id}"
@@ -109,12 +118,16 @@ def _emit_end(
     )
 
     if category_accuracy is not None:
+        category_accuracy = _display_score(category_accuracy)
         line += f" category_accuracy={category_accuracy:.2f}"
     if task_id in {"task_medium", "task_hard"} and priority_accuracy is not None:
+        priority_accuracy = _display_score(priority_accuracy)
         line += f" priority_accuracy={priority_accuracy:.2f}"
     if task_id == "task_hard" and action_accuracy is not None:
+        action_accuracy = _display_score(action_accuracy)
         line += f" action_accuracy={action_accuracy:.2f}"
     if task_id == "task_hard" and reply_accuracy is not None:
+        reply_accuracy = _display_score(reply_accuracy)
         line += f" reply_accuracy={reply_accuracy:.2f}"
 
     print(line)
@@ -679,9 +692,9 @@ def run_task(task_id: str, client: OpenAI | None, model_name: str) -> Dict[str, 
     if reply_accuracy is not None:
         reply_accuracy = SAFE_SCORE(reply_accuracy)
 
-    final_score = SAFE_SCORE(env.final_score())
+    final_score = _display_score(SAFE_SCORE(env.final_score()))
     cumulative_reward = env.state().cumulative_reward
-    avg_reward = cumulative_reward / max(step_count, 1)
+    avg_reward = _display_score(cumulative_reward / max(step_count, 1))
     
     # Get agent stats
     agent_stats = agent.get_stats()
@@ -730,12 +743,9 @@ def main() -> None:
     else:
         mean_final_score = 0.01
 
-    mean_final_score = SAFE_SCORE(mean_final_score)
-
-    if mean_final_score > 0.90:
-        mean_final_score = 0.89
+    mean_final_score = _display_score(SAFE_SCORE(mean_final_score))
     score_parts = " ".join(
-        f"{str(result['task_id'])}={float(result['final_score']):.2f}"
+        f"{str(result['task_id'])}={_display_score(float(result['final_score'])):.2f}"
         for result in task_results
     )
     print()
